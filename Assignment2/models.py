@@ -416,10 +416,65 @@ and a linear layer followed by a softmax.
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+class SingleHeadedAttention(nn.Module):
+    # implementation for a single head attention
+    def __init__(self, n_units, d_k, dropout):
+        """
+        n_units: the number of output units
+        d_k: size of the keys, values, and queries
+        dropout: probability of DROPPING units
+        """
+        super(SingleHeadedAttention, self).__init__()
+        self.n_units = n_units
+        self.d_k = d_k
 
-# ----------------------------------------------------------------------------------
+        k = math.sqrt(1 / self.n_units)
 
-# TODO: implement this class
+        self.WQ = nn.Linear(n_units, d_k, bias=True)
+        nn.init.uniform_(self.WQ.weight, -k, k)
+        nn.init.uniform_(self.WQ.bias, -k, k)
+
+        self.WK = nn.Linear(n_units, d_k, bias=True)
+        nn.init.uniform_(self.WK.weight, -k, k)
+        nn.init.uniform_(self.WK.bias, -k, k)
+
+        self.WV = nn.Linear(n_units, d_k, bias=True)
+        nn.init.uniform_(self.WV.weight, -k, k)
+        nn.init.uniform_(self.WV.bias, -k, k)
+
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, query, key, value, mask=None):
+        Q = self.WQ(query)
+        K = self.WK(key)
+        V = self.WV(value)
+        # compute attention according the magic formula
+        attention = self.ScaledDotProductAttention(Q, K, V, mask)
+
+        return attention
+
+    def ScaledDotProductAttention(self, Q, K, V, mask):
+        # Compute Q * K^T
+        before_softmax = torch.matmul(Q, torch.transpose(K, 1, 2))
+        # Scale by square of d_k
+        #before_softmax = before_softmax / math.sqrt(self.d_k)
+        before_softmax = before_softmax / math.sqrt(Q.size(-1))
+        # Apply mask
+        #mask = mask.to(dtype=torch.float32)
+        #before_softmax_masked = before_softmax * mask
+        #before_softmax_masked = before_softmax_masked - (10**9) * (1 - mask)
+        before_softmax_masked = before_softmax.masked_fill(mask == 0, -1e9)
+        # Compute softmax finally
+        # Do not use "torch.exp" here, thanks TA mentioned it!!!
+        after_softmax = F.softmax(before_softmax_masked, dim=-1)
+        # Apply dropout
+        after_dropout = self.dropout(after_softmax)
+        # Compute final attention
+        attention = torch.matmul(after_dropout, V)
+
+        return attention  # (batch_size, seq_len, self.d_k)
+
+
 class MultiHeadedAttention(nn.Module):
     def __init__(self, n_heads, n_units, dropout=0.1):
         """
@@ -428,29 +483,37 @@ class MultiHeadedAttention(nn.Module):
         dropout: probability of DROPPING units
         """
         super(MultiHeadedAttention, self).__init__()
-        # This sets the size of the keys, values, and queries (self.d_k) to all 
+        # This sets the size of the keys, values, and queries (self.d_k) to all
         # be equal to the number of output units divided by the number of heads.
-        self.d_k = n_units // n_heads
         # This requires the number of n_heads to evenly divide n_units.
         assert n_units % n_heads == 0
         self.n_units = n_units
-
-        # TODO: create/initialize any necessary parameters or layers
+        self.n_heads = n_heads
+        self.d_k = n_units // n_heads
+        # Create/initialize any necessary parameters or layers
+        # Note: the only Pytorch modules you are allowed to use are nn.Linear and nn.Dropout
+        # create attention heads
+        #self.heads = nn.ModuleList([SingleHeadedAttention(self.n_units, self.d_k, dropout) for _ in range(self.n_heads)])
+        self.heads = clones(SingleHeadedAttention(self.n_units, self.d_k, dropout), self.n_heads)
+        self.proj = nn.Linear(self.n_units, self.n_units, bias=True)
         # Initialize all weights and biases uniformly in the range [-k, k],
         # where k is the square root of 1/n_units.
-        # Note: the only Pytorch modules you are allowed to use are nn.Linear 
-        # and nn.Dropout
+        k = math.sqrt(1 / self.n_units)
+        nn.init.uniform_(self.proj.weight, -k, k)
+        nn.init.uniform_(self.proj.bias, -k, k)
 
     def forward(self, query, key, value, mask=None):
-        # TODO: implement the masked multi-head attention.
+        # Implement the masked multi-head attention.
         # query, key, and value all have size: (batch_size, seq_len, self.n_units)
         # mask has size: (batch_size, seq_len, seq_len)
-        # As described in the .tex, apply input masking to the softmax 
+        # As described in the .tex, apply input masking to the softmax
         # generating the "attention values" (i.e. A_i in the .tex)
         # Also apply dropout to the attention values.
+        H = [head(query, key, value, mask) for _, head in enumerate(self.heads)]
+        H = torch.cat(H, dim=-1)
+        A = self.proj(H)
 
-        return  # size: (batch_size, seq_len, self.n_units)
-
+        return A  # (batch_size, seq_len, self.n_units)
 
 # ----------------------------------------------------------------------------------
 # The encodings of elements of the input sequence
