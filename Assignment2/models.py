@@ -104,15 +104,16 @@ class RNN(nn.Module):  # Implement a stacked vanilla RNN with Tanh nonlinearitie
 
   def init_weights(self):
     # Initialize all the weights uniformly in the range [-0.1, 0.1]
-    low = -1.0 / (math.sqrt(self.hidden_size))
-    high = 1.0 / (math.sqrt(self.hidden_size))
-    torch.nn.init.uniform_(self.linear.weight, -0.1, 0.1)
-    torch.nn.init.uniform_(self.infirhidden.weight, low, high)
-    torch.nn.init.uniform_(self.inmulhidden.weight, low, high)
+    k0 = math.sqrt(torch.tensor(1 / (self.hidden_size + self.emb_size)))
+    kn = math.sqrt(torch.tensor(1 / self.hidden_size * 2))
+    torch.nn.init.uniform_(self.infirhidden.weight, -k0, k0)
+    torch.nn.init.uniform_(self.infirhidden.bias, -k0, k0)
+    torch.nn.init.uniform_(self.inmulhidden.weight, -kn, kn)
+    torch.nn.init.uniform_(self.inmulhidden.bias, -kn, kn)
+
     torch.nn.init.uniform_(self.embedding.weight, -0.1, 0.1)
+    torch.nn.init.uniform_(self.linear.weight, -0.1, 0.1)
     torch.nn.init.zeros_(self.linear.bias)
-    torch.nn.init.zeros_(self.infirhidden.bias)
-    torch.nn.init.zeros_(self.inmulhidden.bias)
 
     # TODO ========================
     # Initialize the embedding and output weights uniformly in the range [-0.1, 0.1]
@@ -320,11 +321,21 @@ class GRU(nn.Module):  # Implement a stacked GRU RNN
     return self.hidden  # a parameter tensor of shape (self.num_layers, self.batch_size, self.hidden_size)
 
   def forward(self, inputs, hidden):
-    logits = Variable(torch.zeros(self.seq_len, self.batch_size, self.vocab_size)).cuda()  # Define output
+    if torch.cuda.is_available():
+      logits = Variable(torch.zeros(self.seq_len, self.batch_size, self.vocab_size)).cuda()  # Define output
+      hidden_drop = Variable(torch.zeros(self.num_layers, self.batch_size, self.hidden_size)).cuda()  # Define hidden state with dropout for upward transfer
+    else:
+      logits = Variable(torch.zeros(self.seq_len, self.batch_size, self.vocab_size))  # Define output
+      hidden_drop = Variable(torch.zeros(self.num_layers, self.batch_size, self.hidden_size))  # Define hidden state with dropout for upward transfer
+
     inputs = self.drop(self.embed(inputs))  # inputs size = seq_len*batch_size*emb_size
-    hidden_drop = Variable(torch.zeros(self.num_layers, self.batch_size, self.hidden_size)).cuda()  # Define hidden state with dropout for upward transfer
+
     for t in range(self.seq_len):
-      x = inputs[t].cuda()
+      if torch.cuda.is_available():
+        x = inputs[t].cuda()
+      else:
+        x = inputs[t]
+
       x = torch.transpose(x, 0, 1)
       for i in range(self.num_layers):
         if i == 0:
@@ -341,10 +352,8 @@ class GRU(nn.Module):  # Implement a stacked GRU RNN
           input_t = torch.transpose(hidden_drop[i - 1], 0, 1).clone()
           hidden_t_1 = torch.transpose(hidden[i], 0, 1).clone()
           # Calculate update and reset gates
-          z = torch.sigmoid(
-              torch.mm(self.Wz[i - 1], input_t) + torch.mm(self.Uz[i - 1], hidden_t_1) + self.bz[i - 1])
-          r = torch.sigmoid(
-              torch.mm(self.Wr[i - 1], input_t) + torch.mm(self.Ur[i - 1], hidden_t_1) + self.br[i - 1])
+          z = torch.sigmoid(torch.mm(self.Wz[i - 1], input_t) + torch.mm(self.Uz[i - 1], hidden_t_1) + self.bz[i - 1])
+          r = torch.sigmoid(torch.mm(self.Wr[i - 1], input_t) + torch.mm(self.Ur[i - 1], hidden_t_1) + self.br[i - 1])
           # Calculate hidden units
           hidden_hat = torch.tanh(torch.mm(self.Wh[i - 1], input_t) + torch.mm(self.Uh[i - 1], torch.mul(r, hidden_t_1)) + self.bh[i - 1])
           hidden_t = torch.mul(z, hidden_hat) + torch.mul((1 - z), hidden_t_1)  # hidden_size*batch_size
@@ -355,6 +364,52 @@ class GRU(nn.Module):  # Implement a stacked GRU RNN
 
   def generate(self, input, hidden, generated_seq_len):
     # TODO ========================
+    if torch.cuda.is_available():
+      logits = Variable(torch.zeros(self.batch_size, self.vocab_size)).cuda()  # Define output of softmax
+      hidden_drop = Variable(torch.zeros(self.num_layers, self.batch_size,
+                                         self.hidden_size)).cuda()  # Define hidden state with dropout for upward transfer
+      samples = Variable(torch.zeros([generated_seq_len, self.batch_size], dtype=torch.long)).cuda()  # Define output
+    else:
+      logits = Variable(torch.zeros(self.batch_size, self.vocab_size))  # Define output of softmax
+      hidden_drop = Variable(torch.zeros(self.num_layers, self.batch_size,
+                                         self.hidden_size))  # Define hidden state with dropout for upward transfer
+      samples = Variable(torch.zeros([generated_seq_len, self.batch_size], dtype=torch.long))  # Define output
+
+    samples[0] = input
+    m = nn.Softmax()
+
+    for seq_i in range(generated_seq_len - 1):
+      if torch.cuda.is_available():
+        x = self.drop(self.embed(samples[seq_i])).cuda()  # input size = batch_size*emb_size
+      else:
+        x = self.drop(self.embed(samples[seq_i]))
+
+      x = torch.transpose(x, 0, 1)
+      for i in range(self.num_layers):
+        if i == 0:
+          hidden_t_1 = torch.transpose(hidden[i], 0, 1).clone()  # Previous hidden state
+          # Calculate update and reset gates
+          z = torch.sigmoid(torch.mm(self.Wz_0, x) + torch.mm(self.Uz_0, hidden_t_1) + self.bz_0)
+          r = torch.sigmoid(torch.mm(self.Wr_0, x) + torch.mm(self.Ur_0, hidden_t_1) + self.br_0)
+          # Calculate hidden units
+          hidden_hat = torch.tanh(torch.mm(self.Wh_0, x) + torch.mm(self.Uh_0, torch.mul(r, hidden_t_1)) + self.bh_0)
+          hidden_t = torch.mul(z, hidden_hat) + torch.mul((1 - z), hidden_t_1)  # hidden_size*batch_size
+          hidden[i] = torch.transpose(hidden_t.clone(), 0, 1).clone()
+          hidden_drop[i] = torch.transpose(self.drop(hidden_t.clone()), 0, 1).clone()
+        else:
+          input_t = torch.transpose(hidden_drop[i - 1], 0, 1).clone()
+          hidden_t_1 = torch.transpose(hidden[i], 0, 1).clone()
+          # Calculate update and reset gates
+          z = torch.sigmoid(torch.mm(self.Wz[i - 1], input_t) + torch.mm(self.Uz[i - 1], hidden_t_1) + self.bz[i - 1])
+          r = torch.sigmoid(torch.mm(self.Wr[i - 1], input_t) + torch.mm(self.Ur[i - 1], hidden_t_1) + self.br[i - 1])
+          # Calculate hidden units
+          hidden_hat = torch.tanh(
+            torch.mm(self.Wh[i - 1], input_t) + torch.mm(self.Uh[i - 1], torch.mul(r, hidden_t_1)) + self.bh[i - 1])
+          hidden_t = torch.mul(z, hidden_hat) + torch.mul((1 - z), hidden_t_1)  # hidden_size*batch_size
+          hidden[i] = torch.transpose(hidden_t.clone(), 0, 1).clone()
+          hidden_drop[i] = torch.transpose(self.drop(hidden_t.clone()), 0, 1).clone()
+      logits = m(self.linear(hidden_drop[i].clone()))  # batch_size*vocab_size
+      samples[seq_i + 1] = torch.multinomial(logits, 1).squeeze()  # generated_seq_len, batch_size
     return samples
 
 
