@@ -102,7 +102,7 @@ class RNN(nn.Module):  # Implement a stacked vanilla RNN with Tanh nonlinearitie
     # and compute their gradients automatically. You're not obligated to use the
     # provided clones function.
 
-  def init_weights(self):
+  def init_weights_uniform(self):
     # Initialize all the weights uniformly in the range [-0.1, 0.1]
     k0 = math.sqrt(torch.tensor(1 / (self.hidden_size + self.emb_size)))
     kn = math.sqrt(torch.tensor(1 / self.hidden_size * 2))
@@ -404,7 +404,7 @@ class GRU(nn.Module):  # Implement a stacked GRU RNN
           r = torch.sigmoid(torch.mm(self.Wr[i - 1], input_t) + torch.mm(self.Ur[i - 1], hidden_t_1) + self.br[i - 1])
           # Calculate hidden units
           hidden_hat = torch.tanh(
-            torch.mm(self.Wh[i - 1], input_t) + torch.mm(self.Uh[i - 1], torch.mul(r, hidden_t_1)) + self.bh[i - 1])
+              torch.mm(self.Wh[i - 1], input_t) + torch.mm(self.Uh[i - 1], torch.mul(r, hidden_t_1)) + self.bh[i - 1])
           hidden_t = torch.mul(z, hidden_hat) + torch.mul((1 - z), hidden_t_1)  # hidden_size*batch_size
           hidden[i] = torch.transpose(hidden_t.clone(), 0, 1).clone()
           hidden_drop[i] = torch.transpose(self.drop(hidden_t.clone()), 0, 1).clone()
