@@ -1,0 +1,17 @@
+batch_size    20
+code_file    C:/Users/windows7pro/PycharmProjects/RNN_IFT6135/testGPU.py
+data    data
+debug    False
+dp_keep_prob    0.4
+emb_size    400
+evaluate    False
+hidden_size    512
+initial_lr    10
+model    GRU
+num_epochs    40
+num_layers    2
+optimizer    SGD_LR_SCHEDULE
+save_best    False
+save_dir    GRU_SGD_LR_SCHEDULE_3
+seed    1111
+seq_len    24
