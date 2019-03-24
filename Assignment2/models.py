@@ -73,8 +73,7 @@ class RNN(nn.Module):  # Implement a stacked vanilla RNN with Tanh nonlinearitie
     self.num_layers = num_layers
     self.dp_keep_prob = dp_keep_prob
 
-    #self.hidden = torch.Tensor(self.num_layers, self.batch_size, self.hidden_size).cuda()
-    self.hidden = torch.Tensor(self.num_layers, self.batch_size, self.hidden_size)
+    self.hidden = torch.Tensor(self.num_layers, self.batch_size, self.hidden_size).cuda()    
 
     # define the function of self.Embedding() and self.Linear()
     self.embedding = nn.Embedding(self.vocab_size, self.emb_size)
